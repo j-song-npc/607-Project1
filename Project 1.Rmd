@@ -1,0 +1,128 @@
+---
+title: "Project 1"
+author: "Jane Song"
+date: "2025-02-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+```{r import file}
+library(dplyr)
+library(stringr)
+library(tidyr)
+
+url <- "https://raw.githubusercontent.com/j-song-npc/607-Project1/refs/heads/main/tournamentinfo.txt"
+
+tournament <- read.table(url, sep = "|", 
+                         header = FALSE, 
+                         strip.white = TRUE, 
+                         fill = TRUE) 
+
+
+colnames(tournament) <- c("ID", "Player_Name", "Total points", "Round_1", "Round_2", "Round_3", "Round_4", "Round_5", "Round_6", "Round_7")
+
+
+```
+
+
+##Initial table cleanup 
+```{r table_cleanup}
+
+tournament <- tournament %>% distinct() 
+tournament <- tournament %>% select(where(~ !all(is.na(.))))
+tournament <- tournament %>% slice(-c(1,2,3)) 
+
+  
+```
+
+##Split rows and combine tables
+```{r split rows}
+
+tournament <- tournament %>%
+  mutate(row_id = rep(1:(n()/2), each = 2))
+
+player_data <- tournament %>% 
+  filter(row_number() %% 2 == 1)
+secondary_data <- tournament %>% 
+  filter(row_number() %% 2 == 0)
+full_data <- left_join(player_data, secondary_data, 
+                       by = "row_id", 
+                       suffix =c("_player", "_secondary"))
+
+
+```
+
+##Clean new dataframe 
+```{r clean_df}
+
+colnames(full_data) <- c("ID", "Player_Name", "Total_points", "Round_1", "Round_2", "Round_3", "Round_4","Round_5", "Round_6", "Round_7","row_id", "State", "USCF_ID", "N", "Side_Round1", "Side_Round2", "Side_Round3", "Side_Round4", "Side_Round5", "Side_Round6", "Side_Round7")
+
+full_data <- full_data %>% 
+    select(-row_id)
+
+```
+
+##Split data in USCF/ID into new columns 
+``` {r Split cells}
+
+full_data <- full_data %>%
+  separate(USCF_ID, 
+           into = c("USCF_ID", "Rating_Change"), 
+           sep = " / R: ")
+full_data <- full_data %>%
+    separate(Rating_Change, into = c("Initial_Rating", "Final_Rating"),
+             sep = "\\s*->\\s*", remove = FALSE)
+
+
+```
+##Flip table
+
+``` {r long-table}
+full_data <- full_data %>%
+    pivot_longer(cols = starts_with("Round"),  
+     names_to = "Round_",
+     values_to = "Result")
+
+full_data <- full_data %>%
+  separate(Result, into = c("Result", "Opponent_ID"), 
+           sep = "\\s+")
+
+full_data <- full_data %>%
+     mutate(Initial_Rating = 
+              gsub("[A-Za-z].*", "", Initial_Rating))
+full_data <- full_data %>%  
+   mutate(Final_Rating = 
+            gsub("[A-Za-z].*", "", Final_Rating))
+```
+
+##Mean of initial ratings 
+
+``` {r Mean}
+
+full_data <- full_data %>% 
+   left_join(select(full_data, ID, Initial_Rating), 
+             by = c("Opponent_ID" = "ID"), 
+             suffix = c("_player", "_opponent"))
+full_data <- full_data %>% distinct()
+
+full_data <- full_data %>% 
+  filter(!is.na(Initial_Rating_opponent))
+
+full_data$Initial_Rating_opponent <- as.numeric(gsub("[^0-9.-]", "", full_data$Initial_Rating_opponent))
+
+Clean_data <- full_data %>%
+  group_by(Player_Name, State, Total_points, Initial_Rating_player) %>%
+  summarize(Avg_Opponent_Rating = round(mean(Initial_Rating_opponent, na.rm = TRUE)))
+
+```
+
+``` {r csv}
+write.csv(Clean_data, file = "Tournament_initial_ratings.csv", row.names = FALSE)
+```
+
